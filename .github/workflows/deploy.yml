@@ -1,0 +1,92 @@
+name: Build and Deploy Spark Job
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'build.sbt'
+      - 'project/**'
+      - 'Dockerfile'
+      - '.github/workflows/deploy.yml'
+
+permissions:
+  # write: needed to commit the manifest image-tag update back to the repo
+  contents: write
+  # required to mint the OIDC token WIF exchanges for a GCP access token
+  id-token: write
+
+env:
+  PROJECT_ID: de-projects-501515
+  REGION: us-central1
+  REPOSITORY: spark
+  IMAGE: spark-demo
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      # clones the repo into the runner
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # installs a JDK on the runner
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          # Amazon Corretto 21
+          distribution: corretto
+          java-version: '21'
+
+      # installs sbt on the runner, version pinned via project/build.properties
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # compiles the project and packages it with dependencies into one jar
+      - name: Build fat jar
+        run: sbt assembly
+
+      # Authenticates GitHub Actions to Google Cloud using WIF
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      # Configures Docker to push images to Artifact Registry
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
+
+      # Builds the Spark application image with a versioned tag and latest tag
+      - name: Build image
+        run: |
+          VERSION="0.1.$((GITHUB_RUN_NUMBER - 1))"
+          IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}"
+
+          docker build \
+            -t "${IMAGE_URI}:${VERSION}" \
+            -t "${IMAGE_URI}:latest" \
+            .
+
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+
+      # Pushes both image tags to Artifact Registry
+      - name: Push image
+        run: |
+          docker push "${IMAGE_URI}:${VERSION}"
+          docker push "${IMAGE_URI}:latest"
+
+      # Updates the SparkApplication manifest with the new image version
+      - name: Update SparkApplication manifest
+        run: |
+          sed -i "s|image: .*|image: ${IMAGE_URI}:${VERSION}|" k8s/gke-spark-data-process-job.yaml
+
+      # Commits the updated manifest back to the repository
+      - name: Commit and push manifest update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add k8s/gke-spark-data-process-job.yaml
+          git commit -m "ci: update Spark image to ${VERSION}" || echo "No changes to commit"
+          git push

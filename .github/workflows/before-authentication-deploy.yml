@@ -1,0 +1,75 @@
+name: Build and Deploy Spark Job (before authentication)
+
+on:
+  push:
+    branches: [master]
+    # only trigger when code/image-relevant files change
+    paths:
+      - 'src/**'
+      - 'build.sbt'
+      - 'project/**'
+      - 'Dockerfile'
+      - '.github/workflows/before-authentication-deploy.yml'
+
+permissions:
+  # write: needed to commit the manifest image-tag update back to the repo (unreachable here)
+  # kept only so this file mirrors deploy.yml's structure)
+  contents: write
+
+env:
+  PROJECT_ID: de-projects-501515
+  REGION: us-central1
+  REPOSITORY: spark
+  IMAGE: spark-demo
+
+jobs:
+  build-and-push:
+    # fresh, ephemeral VM provided by GitHub, not a persistent build server
+    runs-on: ubuntu-latest
+    steps:
+      # clones the repo into the runner
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # installs a JDK on the runner
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          # Amazon Corretto 21
+          distribution: corretto
+          java-version: '21'
+
+      # installs sbt on the runner, version pinned via project/build.properties
+      - name: Set up sbt
+        uses: sbt/setup-sbt@v1
+
+      # compiles the project and packages it with dependencies into one jar
+      - name: Build fat jar
+        run: sbt assembly
+
+      # builds the Docker image locally on the runner, not yet pushed anywhere
+      - name: Build image
+        run: |
+          # unique tag per commit, avoids relying on "latest"
+          IMAGE_TAG="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE}:${GITHUB_SHA}"
+          # builds the image defined in Dockerfile
+          docker build -t "$IMAGE_TAG" .
+          # exposes IMAGE_TAG to the next step
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+
+      # no GCP authentication configured — this step is expected to fail,
+      # so the two steps below never actually run
+      - name: Push image
+        run: docker push "$IMAGE_TAG"
+
+      - name: Update SparkApplication manifest
+        run: |
+          sed -i "s|image: .*|image: $IMAGE_TAG|" k8s/gke-spark-data-process-job.yaml
+
+      - name: Commit and push manifest update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add k8s/gke-spark-data-process-job.yaml
+          git commit -m "ci: bump image to $IMAGE_TAG" || echo "No changes to commit"
+          git push
