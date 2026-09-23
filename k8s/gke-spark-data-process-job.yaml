@@ -1,0 +1,49 @@
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: gke-spark-data-process-job
+  namespace: spark
+spec:
+  type: Scala
+  mode: cluster
+  image: us-central1-docker.pkg.dev/de-projects-501515/spark/spark-demo:0.1.5
+  imagePullPolicy: Always
+  mainClass: de.tg.spark.TopOrdersPerCustomerJob
+  mainApplicationFile: local:///opt/spark/jars/app.jar
+  sparkVersion: 4.0.3
+
+  restartPolicy:
+    type: OnFailure
+    onFailureRetries: 2
+    onFailureRetryInterval: 20
+    onSubmissionFailureRetries: 2
+    onSubmissionFailureRetryInterval: 30
+
+  sparkConf:
+    "spark.eventLog.enabled": "true"
+    "spark.eventLog.dir": "gs://spark-on-k8s-data/spark-events/"
+    "spark.plugins": "io.dataflint.spark.SparkDataflintPlugin"
+    "spark.sql.maxMetadataStringLength": "10000"
+
+  hadoopConf:
+    "fs.gs.impl": "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem"
+    "fs.AbstractFileSystem.gs.impl": "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS"
+
+  driver:
+    cores: 1
+    coreRequest: "100m"
+    memory: "512m"
+    serviceAccount: spark
+    labels:
+      app: gke-spark-data-process-job
+      role: driver
+
+  executor:
+    instances: 1
+    cores: 1
+    coreRequest: "100m"
+    memory: "512m"
+    serviceAccount: spark
+    labels:
+      app: gke-spark-data-process-job
+      role: executor

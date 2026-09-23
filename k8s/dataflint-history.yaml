@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dataflint-history
+  namespace: spark
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dataflint-history
+  template:
+    metadata:
+      labels:
+        app: dataflint-history
+    spec:
+      serviceAccountName: spark
+      containers:
+        - name: history-server
+          image: us-central1-docker.pkg.dev/de-projects-501515/spark/spark-demo:0.1.5
+          command:
+            - /opt/spark/bin/spark-class
+            - org.apache.spark.deploy.history.HistoryServer
+          env:
+            - name: SPARK_NO_DAEMONIZE
+              value: "true"
+            - name: SPARK_HISTORY_OPTS
+              value: >-
+                -Dspark.history.fs.logDirectory=gs://spark-on-k8s-data/spark-events/
+                -Dspark.history.ui.port=18080
+                -Dspark.plugins=io.dataflint.spark.SparkDataflintPlugin
+                -Dspark.sql.maxMetadataStringLength=10000
+                -Dspark.hadoop.fs.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem
+                -Dspark.hadoop.fs.AbstractFileSystem.gs.impl=com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS
+          ports:
+            - containerPort: 18080
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "512Mi"
+            limits:
+              memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dataflint-history
+  namespace: spark
+spec:
+  selector:
+    app: dataflint-history
+  ports:
+    - port: 18080
+      targetPort: 18080
+  type: ClusterIP
