@@ -64,6 +64,6 @@ This allows completed Spark applications to be inspected using stage, task, exec
 
 ## Article
 
-A detailed walkthrough of the project is available in the accompanying Medium article.
+A detailed walkthrough of the project is available in the accompanying Medium article:
 
-> Medium link. Not yet :)
+[From Code to GKE: Automating Spark Deployments with GitHub Actions and Argo CD](https://blog.devgenius.io/from-code-to-gke-automating-spark-deployments-with-github-actions-and-argo-cd-6d941c01d40c)
